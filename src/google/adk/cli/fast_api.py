@@ -40,6 +40,7 @@ from ..evaluation.local_eval_set_results_manager import LocalEvalSetResultsManag
 from ..evaluation.local_eval_sets_manager import LocalEvalSetsManager
 from ..memory.in_memory_memory_service import InMemoryMemoryService
 from ..memory.vertex_ai_memory_bank_service import VertexAiMemoryBankService
+from ..memory.base_memory_service import BaseMemoryService
 from ..runners import Runner
 from ..sessions.in_memory_session_service import InMemorySessionService
 from ..sessions.vertex_ai_session_service import VertexAiSessionService
@@ -130,9 +131,32 @@ def get_fast_api_app(
           location=location,
           agent_engine_id=agent_engine_id,
       )
+    elif memory_service_uri.startswith("python:"):
+        # Mem0MemoryService
+      python_class_name = memory_service_uri.split(":")[1]
+
+      def instantiate_class(python_class_name, *args, **kwargs):
+        try:
+          tokens = python_class_name.split('.')
+          if len(tokens) > 1:
+            module_name = '.'.join(tokens[0:-1])
+            class_name = tokens[-1]
+            module = __import__(module_name, fromlist=[class_name])
+            cls = getattr(module, class_name)
+          else:
+            cls = globals()[python_class_name](*args, **kwargs)
+          return cls(*args, **kwargs)
+        except (ImportError, AttributeError) as e:
+          raise click.ClickException(f"Failed to instantiate {python_class_name} {e}")
+
+      memory_service = instantiate_class(python_class_name)
+      if not isinstance(memory_service, BaseMemoryService):
+        raise click.ClickException(f'{python_class_name} is not a memory service')
+
+      logger.info(f'Instantiated memory service: {python_class_name}')
     else:
       raise click.ClickException(
-          "Unsupported memory service URI: %s" % memory_service_uri
+        "Unsupported memory service URI: %s" % memory_service_uri
       )
   else:
     memory_service = InMemoryMemoryService()
